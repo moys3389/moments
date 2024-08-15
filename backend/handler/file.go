@@ -5,6 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"time"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -15,20 +22,14 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/samber/do/v2"
 	"gorm.io/gorm"
-	"io"
-	"os"
-	"path"
-	"path/filepath"
-	"strings"
-	"time"
 )
 
 type FileHandler struct {
-	base BaseHandler
+	base *BaseHandler
 }
 
-func NewFileHandler(injector do.Injector) *FileHandler {
-	return &FileHandler{do.MustInvoke[BaseHandler](injector)}
+func NewFileHandler(injector do.Injector) (*FileHandler, error) {
+	return &FileHandler{do.MustInvoke[*BaseHandler](injector)}, nil
 }
 
 func (f FileHandler) Get(c echo.Context) error {
@@ -58,7 +59,7 @@ func (f FileHandler) Upload(c echo.Context) error {
 	)
 	form, err := c.MultipartForm()
 	if err != nil {
-		f.base.log.Error().Msgf("读取上传图片异常:%s", err)
+		f.base.logger.Error().Msgf("读取上传图片异常:%s", err)
 		return FailRespWithMsg(c, Fail, "上传图片异常")
 	}
 	files := form.File["files"]
@@ -67,24 +68,24 @@ func (f FileHandler) Upload(c echo.Context) error {
 		// Source
 		src, err := file.Open()
 		if err != nil {
-			f.base.log.Error().Msgf("打开上传图片异常:%s", err)
+			f.base.logger.Error().Msgf("打开上传图片异常:%s", err)
 			return FailRespWithMsg(c, Fail, "上传图片异常")
 		}
 		// Destination
 		filename := strings.ReplaceAll(uuid.NewString(), "-", "")
 		path := path.Join(f.base.cfg.UploadDir, filename)
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			f.base.log.Error().Msgf("创建父级目录异常:%s", err)
+			f.base.logger.Error().Msgf("创建父级目录异常:%s", err)
 			return FailRespWithMsg(c, Fail, "创建父级目录异常")
 		}
 		dst, err := os.Create(path)
 		if err != nil {
-			f.base.log.Error().Msgf("打开目标图片异常:%s", err)
+			f.base.logger.Error().Msgf("打开目标图片异常:%s", err)
 			return FailRespWithMsg(c, Fail, "上传图片异常")
 		}
 		// Copy
 		if _, err = io.Copy(dst, src); err != nil {
-			f.base.log.Error().Msgf("复制图片异常:%s", err)
+			f.base.logger.Error().Msgf("复制图片异常:%s", err)
 			return FailRespWithMsg(c, Fail, "上传图片异常")
 		}
 
@@ -129,7 +130,7 @@ func (f FileHandler) S3PreSigned(c echo.Context) error {
 		return FailResp(c, Fail)
 	}
 	if err := json.Unmarshal([]byte(sysConfig.Content), &sysConfigVo); err != nil {
-		f.base.log.Error().Msgf("无法反序列化系统配置, %s", err)
+		f.base.logger.Error().Msgf("无法反序列化系统配置, %s", err)
 		return FailRespWithMsg(c, Fail, err.Error())
 	}
 	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(sysConfigVo.S3.Region),
@@ -138,7 +139,7 @@ func (f FileHandler) S3PreSigned(c echo.Context) error {
 		})),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sysConfigVo.S3.AccessKey, sysConfigVo.S3.SecretKey, "")))
 	if err != nil {
-		f.base.log.Error().Msgf("无法加载SDK配置, %s", err)
+		f.base.logger.Error().Msgf("无法加载SDK配置, %s", err)
 		return FailRespWithMsg(c, Fail, err.Error())
 	}
 
@@ -155,7 +156,7 @@ func (f FileHandler) S3PreSigned(c echo.Context) error {
 	})
 
 	if err != nil {
-		f.base.log.Error().Msgf("无法获取预签名URL, %s", err)
+		f.base.logger.Error().Msgf("无法获取预签名URL, %s", err)
 		return FailRespWithMsg(c, Fail, fmt.Sprintf("无法获取预签名URL, %s", err))
 	}
 
@@ -163,4 +164,8 @@ func (f FileHandler) S3PreSigned(c echo.Context) error {
 		PreSignedUrl: presignedResult.URL,
 		ImageUrl:     fmt.Sprintf("%s/%s", sysConfigVo.S3.Domain, key),
 	})
+}
+
+func init() {
+	do.Provide(nil, NewFileHandler)
 }

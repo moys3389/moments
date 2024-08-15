@@ -2,17 +2,18 @@ package handler
 
 import (
 	"encoding/json"
+	"time"
+
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/kingwrcy/moments/db"
 	"github.com/kingwrcy/moments/vo"
 	"github.com/labstack/echo/v4"
 	"github.com/samber/do/v2"
 	"golang.org/x/crypto/bcrypt"
-	"time"
 )
 
 type UserHandler struct {
-	base BaseHandler
+	base *BaseHandler
 }
 
 type loginSuccessDTO struct {
@@ -21,8 +22,8 @@ type loginSuccessDTO struct {
 	Id       int32  `json:"id,omitempty"`       //用户ID
 }
 
-func NewUserHandler(injector do.Injector) *UserHandler {
-	return &UserHandler{do.MustInvoke[BaseHandler](injector)}
+func NewUserHandler(injector do.Injector) (*UserHandler, error) {
+	return &UserHandler{do.MustInvoke[*BaseHandler](injector)}, nil
 }
 
 // Login godoc
@@ -57,7 +58,7 @@ func (u UserHandler) Login(c echo.Context) error {
 
 	tokenString, err := token.SignedString([]byte(u.base.cfg.JwtKey))
 	if err != nil {
-		u.base.log.Error().Msgf("生成jwt token异常:%s", err)
+		u.base.logger.Error().Msgf("生成jwt token异常:%s", err)
 		return FailRespWithMsg(c, Fail, "登录异常")
 	}
 	return SuccessResp(c, loginSuccessDTO{
@@ -111,7 +112,7 @@ func (u UserHandler) Reg(c echo.Context) error {
 	user.Username = req.Username
 	pwd, err := bcrypt.GenerateFromPassword([]byte(req.Password), 10)
 	if err != nil {
-		u.base.log.Error().Msgf("密码加密异常:%s", err)
+		u.base.logger.Error().Msgf("密码加密异常:%s", err)
 		return FailRespWithMsg(c, Fail, "密码加密异常")
 	}
 	user.Password = string(pwd)
@@ -122,7 +123,7 @@ func (u UserHandler) Reg(c echo.Context) error {
 	user.Slogan = "修道者，逆天而行，注定要一生孤独。"
 	user.CoverUrl = "/cover.webp"
 	if err := u.base.db.Save(&user).Error; err != nil {
-		u.base.log.Error().Msgf("注册用户异常:%s", err)
+		u.base.logger.Error().Msgf("注册用户异常:%s", err)
 		return FailRespWithMsg(c, Fail, "注册用户异常")
 	}
 	return SuccessResp(c, h{})
@@ -205,4 +206,8 @@ func (u UserHandler) SaveProfile(c echo.Context) error {
 		return FailResp(c, Fail)
 	}
 	return SuccessResp(c, h{})
+}
+
+func init() {
+	do.Provide(nil, NewUserHandler)
 }

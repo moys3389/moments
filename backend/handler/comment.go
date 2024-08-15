@@ -4,25 +4,26 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/kingwrcy/moments/db"
-	"github.com/kingwrcy/moments/vo"
-	"github.com/labstack/echo/v4"
-	"github.com/rs/zerolog"
-	"github.com/samber/do/v2"
-	"gorm.io/gorm"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/kingwrcy/moments/db"
+	"github.com/kingwrcy/moments/logger"
+	"github.com/kingwrcy/moments/vo"
+	"github.com/labstack/echo/v4"
+	"github.com/samber/do/v2"
+	"gorm.io/gorm"
 )
 
 type CommentHandler struct {
-	base BaseHandler
+	base *BaseHandler
 }
 
-func NewCommentHandler(injector do.Injector) *CommentHandler {
-	return &CommentHandler{do.MustInvoke[BaseHandler](injector)}
+func NewCommentHandler(injector do.Injector) (*CommentHandler, error) {
+	return &CommentHandler{do.MustInvoke[*BaseHandler](injector)}, nil
 }
 
 // RemoveComment godoc
@@ -62,7 +63,7 @@ func (c CommentHandler) RemoveComment(ctx echo.Context) error {
 	return SuccessResp(ctx, h{})
 }
 
-func checkGoogleRecaptcha(logger zerolog.Logger, sysConfigVO vo.FullSysConfigVO, token string) error {
+func checkGoogleRecaptcha(logger *logger.Logger, sysConfigVO vo.FullSysConfigVO, token string) error {
 	if sysConfigVO.EnableGoogleRecaptcha {
 		if token == "" {
 			return errors.New("token必填")
@@ -124,12 +125,12 @@ func (c CommentHandler) AddComment(ctx echo.Context) error {
 	)
 	err := ctx.Bind(&req)
 	if err != nil {
-		c.base.log.Error().Msgf("发表评论时参数校验失败,原因:%s", err)
+		c.base.logger.Error().Msgf("发表评论时参数校验失败,原因:%s", err)
 		return FailResp(ctx, ParamError)
 	}
 	c.base.db.First(&sysConfig)
 	_ = json.Unmarshal([]byte(sysConfig.Content), &sysConfigVO)
-	if err := checkGoogleRecaptcha(c.base.log, sysConfigVO, req.Token); err != nil {
+	if err := checkGoogleRecaptcha(c.base.logger, sysConfigVO, req.Token); err != nil {
 		return FailRespWithMsg(ctx, Fail, err.Error())
 	}
 	if context, ok := ctx.(CustomContext); ok {
@@ -154,4 +155,8 @@ func (c CommentHandler) AddComment(ctx echo.Context) error {
 		return SuccessResp(ctx, h{})
 	}
 	return FailRespWithMsg(ctx, Fail, "发表评论失败")
+}
+
+func init() {
+	do.Provide(nil, NewCommentHandler)
 }

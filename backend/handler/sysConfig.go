@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+
 	"github.com/kingwrcy/moments/db"
 	"github.com/kingwrcy/moments/vo"
 	"github.com/labstack/echo/v4"
@@ -11,11 +12,11 @@ import (
 )
 
 type SysConfigHandler struct {
-	base BaseHandler
+	base *BaseHandler
 }
 
-func NewSysConfigHandler(injector do.Injector) *SysConfigHandler {
-	return &SysConfigHandler{do.MustInvoke[BaseHandler](injector)}
+func NewSysConfigHandler(injector do.Injector) (*SysConfigHandler, error) {
+	return &SysConfigHandler{do.MustInvoke[*BaseHandler](injector)}, nil
 }
 
 // GetConfig godoc
@@ -103,7 +104,7 @@ func (s SysConfigHandler) SaveConfig(c echo.Context) error {
 	}
 
 	if err := c.Bind(&result); err != nil {
-		s.base.log.Info().Msgf("保存配置错误,%s", err)
+		s.base.logger.Info().Msgf("保存配置错误,%s", err)
 		return FailResp(c, ParamError)
 	}
 
@@ -125,4 +126,8 @@ func (s SysConfigHandler) SaveConfig(c echo.Context) error {
 	}
 	s.base.db.Table("User").Where("id=?", 1).Update("username", result.AdminUserName)
 	return SuccessResp(c, h{})
+}
+
+func init() {
+	do.Provide(nil, NewSysConfigHandler)
 }

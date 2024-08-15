@@ -5,19 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/PuerkitoBio/goquery"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/google/uuid"
-	"github.com/kingwrcy/moments/db"
-	"github.com/kingwrcy/moments/vo"
-	"github.com/labstack/echo/v4"
-	"github.com/rs/zerolog"
-	"github.com/samber/do/v2"
-	"golang.org/x/net/html"
-	"gorm.io/gorm"
 	"io"
 	"net/http"
 	"net/url"
@@ -27,18 +14,33 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/PuerkitoBio/goquery"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/google/uuid"
+	"github.com/kingwrcy/moments/appconfig"
+	"github.com/kingwrcy/moments/db"
+	"github.com/kingwrcy/moments/logger"
+	"github.com/kingwrcy/moments/vo"
+	"github.com/labstack/echo/v4"
+	"github.com/samber/do/v2"
+	"golang.org/x/net/html"
+	"gorm.io/gorm"
 )
 
 type MemoHandler struct {
-	base BaseHandler
+	base *BaseHandler
 	hc   http.Client
 }
 
-func NewMemoHandler(injector do.Injector) *MemoHandler {
+func NewMemoHandler(injector do.Injector) (*MemoHandler, error) {
 	return &MemoHandler{
-		base: do.MustInvoke[BaseHandler](injector),
+		base: do.MustInvoke[*BaseHandler](injector),
 		hc:   http.Client{},
-	}
+	}, nil
 }
 
 // RemoveImage godoc
@@ -259,7 +261,7 @@ func (m MemoHandler) LikeMemo(c echo.Context) error {
 		if token == "" {
 			return FailRespWithMsg(c, ParamError, "token不能为空")
 		}
-		if err := checkGoogleRecaptcha(m.base.log, sysConfigVO, token); err != nil {
+		if err := checkGoogleRecaptcha(m.base.logger, sysConfigVO, token); err != nil {
 			return FailRespWithMsg(c, Fail, err.Error())
 		}
 	}
@@ -326,7 +328,7 @@ func (m MemoHandler) SaveMemo(c echo.Context) error {
 	)
 	err := c.Bind(&req)
 	if err != nil {
-		m.base.log.Error().Msgf("保存memo时参数校验失败,原因:%s", err)
+		m.base.logger.Error().Msgf("保存memo时参数校验失败,原因:%s", err)
 		return FailResp(c, ParamError)
 	}
 
@@ -351,7 +353,7 @@ func (m MemoHandler) SaveMemo(c echo.Context) error {
 	}
 
 	//content, tags := FindAndReplaceTags(req.Content)
-	//m.base.log.Info().Msgf("tags is %+v,content is %s", tags, content)
+	//m.base.logger.Info().Msgf("tags is %+v,content is %s", tags, content)
 	if len(req.Tags) == 0 {
 		memo.Tags = nil
 	} else {
@@ -375,7 +377,7 @@ func (m MemoHandler) SaveMemo(c echo.Context) error {
 	memo.Ext = extJson
 	memo.ShowType = req.ShowType
 
-	m.base.log.Info().Msgf("memo is %+v", memo)
+	m.base.logger.Info().Msgf("memo is %+v", memo)
 
 	if req.ID > 0 {
 		if memo.Tags == nil || *memo.Tags == "" {
@@ -597,21 +599,21 @@ func (m MemoHandler) GetDoubanMovieInfo(c echo.Context) error {
 	req.Header.Set("User-Agent", userAgent)
 	start := time.Now()
 	res, err := m.hc.Do(req)
-	m.base.log.Info().Str("豆瓣读书ID", id).Str("URL", target).Str("耗时", fmt.Sprintf("%f秒", time.Since(start).Seconds())).Msgf("获取豆瓣读书")
+	m.base.logger.Info().Str("豆瓣读书ID", id).Str("URL", target).Str("耗时", fmt.Sprintf("%f秒", time.Since(start).Seconds())).Msgf("获取豆瓣读书")
 	if err != nil {
-		m.base.log.Error().Msgf("获取豆瓣电影异常:%s", err.Error())
+		m.base.logger.Error().Msgf("获取豆瓣电影异常:%s", err.Error())
 		return FailRespWithMsg(c, Fail, err.Error())
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		m.base.log.Error().Msgf("豆瓣电影API返回码不是200,而是:%d", res.StatusCode)
+		m.base.logger.Error().Msgf("豆瓣电影API返回码不是200,而是:%d", res.StatusCode)
 		return FailRespWithMsg(c, Fail, fmt.Sprintf("豆瓣读书API返回码不是200,而是:%d,URL:%s", res.StatusCode, target))
 	}
 
 	// Load the HTML document
 	doc, err := goquery.NewDocumentFromReader(res.Body)
 	if err != nil {
-		m.base.log.Error().Msgf("初始化html错误,%s", err.Error())
+		m.base.logger.Error().Msgf("初始化html错误,%s", err.Error())
 		return FailRespWithMsg(c, Fail, fmt.Sprintf("初始化html错误,%s", err.Error()))
 	}
 
@@ -649,7 +651,7 @@ func (m MemoHandler) GetDoubanMovieInfo(c echo.Context) error {
 			})),
 			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sysConfigVo.S3.AccessKey, sysConfigVo.S3.SecretKey, "")))
 		if err != nil {
-			m.base.log.Error().Msgf("无法加载S3 SDK配置, %s", err)
+			m.base.logger.Error().Msgf("无法加载S3 SDK配置, %s", err)
 			return FailRespWithMsg(c, Fail, err.Error())
 		}
 		req, _ := http.NewRequest("GET", target, nil)
@@ -671,7 +673,7 @@ func (m MemoHandler) GetDoubanMovieInfo(c echo.Context) error {
 		}
 		book.Image = fmt.Sprintf("%s/%s", sysConfigVo.S3.Domain, key)
 	} else {
-		image, err := downloadImage(book.Image, m.base.log, m.base.cfg)
+		image, err := downloadImage(book.Image, m.base.logger, m.base.cfg)
 		if err != nil {
 			return FailRespWithMsg(c, Fail, fmt.Sprintf("下载豆瓣电影图片异常:%s", err.Error()))
 		}
@@ -680,13 +682,13 @@ func (m MemoHandler) GetDoubanMovieInfo(c echo.Context) error {
 	return SuccessResp(c, book)
 }
 
-func downloadImage(src string, log zerolog.Logger, conf *vo.AppConfig) (string, error) {
+func downloadImage(src string, logger *logger.Logger, conf *appconfig.AppConfig) (string, error) {
 	start := time.Now()
 	client := &http.Client{}
 	req, _ := http.NewRequest("GET", src, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3")
 	response, err := client.Do(req)
-	log.Info().Msgf("下载图片完成:%s,耗时:%f", src, time.Since(start).Seconds())
+	logger.Info().Msgf("下载图片完成:%s,耗时:%f", src, time.Since(start).Seconds())
 	if err != nil {
 		return "", err
 	}
@@ -695,15 +697,15 @@ func downloadImage(src string, log zerolog.Logger, conf *vo.AppConfig) (string, 
 	key := strings.ReplaceAll(uuid.NewString(), "-", "")
 	filepath := fmt.Sprintf("%s/%s.jpg", conf.UploadDir, key)
 	dst, err := os.Create(filepath)
-	log.Info().Msgf("保存图片到本地完成:%s,耗时:%f", src, time.Since(start).Seconds())
+	logger.Info().Msgf("保存图片到本地完成:%s,耗时:%f", src, time.Since(start).Seconds())
 	if err != nil {
-		log.Error().Msgf("打开目标图片异常:%s", err)
+		logger.Error().Msgf("打开目标图片异常:%s", err)
 		return "", err
 	}
 	defer dst.Close()
 
 	_, err = io.Copy(dst, response.Body)
-	log.Info().Msgf("保存图片到本地完成:%s,耗时:%f", src, time.Since(start).Seconds())
+	logger.Info().Msgf("保存图片到本地完成:%s,耗时:%f", src, time.Since(start).Seconds())
 	if err != nil {
 		return "", err
 	}
@@ -738,30 +740,30 @@ func (m MemoHandler) GetDoubanBookInfo(c echo.Context) error {
 	}
 
 	id := c.QueryParam("id")
-	m.base.log.Info().Msgf("开始分析豆瓣图书,id:%s", id)
+	m.base.logger.Info().Msgf("开始分析豆瓣图书,id:%s", id)
 
 	target := fmt.Sprintf("https://book.douban.com/subject/%s/", id)
 	// Request the HTML page.
 	client := &http.Client{}
 	start := time.Now()
 	req, _ := http.NewRequest("GET", target, nil)
-	m.base.log.Info().Msgf("请求豆瓣读书地址:%s,耗时:%f秒", target, time.Since(start).Seconds())
+	m.base.logger.Info().Msgf("请求豆瓣读书地址:%s,耗时:%f秒", target, time.Since(start).Seconds())
 	req.Header.Set("User-Agent", userAgent)
 	res, err := client.Do(req)
 	if err != nil {
-		m.base.log.Error().Msgf("获取豆瓣读书异常:%s", err.Error())
+		m.base.logger.Error().Msgf("获取豆瓣读书异常:%s", err.Error())
 		return FailRespWithMsg(c, Fail, err.Error())
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		m.base.log.Error().Msgf("豆瓣读书API返回码不是200,而是:%d", res.StatusCode)
+		m.base.logger.Error().Msgf("豆瓣读书API返回码不是200,而是:%d", res.StatusCode)
 		return FailRespWithMsg(c, Fail, fmt.Sprintf("豆瓣读书API返回码不是200,而是:%d,URL:%s", res.StatusCode, target))
 	}
 
 	// Load the HTML document
 	doc, err := goquery.NewDocumentFromReader(res.Body)
 	if err != nil {
-		m.base.log.Error().Msgf("初始化html错误,%s", err.Error())
+		m.base.logger.Error().Msgf("初始化html错误,%s", err.Error())
 		return FailRespWithMsg(c, Fail, fmt.Sprintf("初始化html错误,%s", err.Error()))
 	}
 
@@ -802,7 +804,7 @@ func (m MemoHandler) GetDoubanBookInfo(c echo.Context) error {
 			})),
 			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sysConfigVo.S3.AccessKey, sysConfigVo.S3.SecretKey, "")))
 		if err != nil {
-			m.base.log.Error().Msgf("无法加载S3 SDK配置, %s", err)
+			m.base.logger.Error().Msgf("无法加载S3 SDK配置, %s", err)
 			return FailRespWithMsg(c, Fail, err.Error())
 		}
 		req, _ = http.NewRequest("GET", target, nil)
@@ -824,11 +826,15 @@ func (m MemoHandler) GetDoubanBookInfo(c echo.Context) error {
 		}
 		book.Image = fmt.Sprintf("%s/%s", sysConfigVo.S3.Domain, key)
 	} else {
-		image, err := downloadImage(book.Image, m.base.log, m.base.cfg)
+		image, err := downloadImage(book.Image, m.base.logger, m.base.cfg)
 		if err != nil {
 			return FailRespWithMsg(c, Fail, fmt.Sprintf("下载豆瓣图片异常:%s", err.Error()))
 		}
 		book.Image = image
 	}
 	return SuccessResp(c, book)
+}
+
+func init() {
+	do.Provide(nil, NewMemoHandler)
 }

@@ -2,18 +2,19 @@ package handler
 
 import (
 	"database/sql"
+	"strings"
+
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/labstack/echo/v4"
 	"github.com/samber/do/v2"
-	"strings"
 )
 
 type TagHandler struct {
-	base BaseHandler
+	base *BaseHandler
 }
 
-func NewTagHandler(injector do.Injector) *TagHandler {
-	return &TagHandler{do.MustInvoke[BaseHandler](injector)}
+func NewTagHandler(injector do.Injector) (*TagHandler, error) {
+	return &TagHandler{do.MustInvoke[*BaseHandler](injector)}, nil
 }
 
 type tagListResp struct {
@@ -48,4 +49,8 @@ func (t TagHandler) List(c echo.Context) error {
 	return SuccessResp(c, tagListResp{
 		Tags: mySet.ToSlice(),
 	})
+}
+
+func init() {
+	do.Provide(nil, NewTagHandler)
 }

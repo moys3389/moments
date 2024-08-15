@@ -2,11 +2,7 @@ package handler
 
 import (
 	"github.com/kingwrcy/moments/db"
-	"github.com/kingwrcy/moments/vo"
 	"github.com/labstack/echo/v4"
-	"github.com/rs/zerolog"
-	"github.com/samber/do/v2"
-	"gorm.io/gorm"
 )
 
 type BizError = int
@@ -26,22 +22,6 @@ var errorMessageMap = map[BizError]string{
 	ParamError:   "参数错误",
 	TokenInvalid: "Token无效",
 	TokenMissing: "Token缺失",
-}
-
-type BaseHandler struct {
-	injector do.Injector
-	cfg      *vo.AppConfig
-	db       *gorm.DB
-	log      zerolog.Logger
-}
-
-func NewBaseHandler(injector do.Injector) (BaseHandler, error) {
-	return BaseHandler{
-		injector: injector,
-		cfg:      do.MustInvoke[*vo.AppConfig](injector),
-		db:       do.MustInvoke[*gorm.DB](injector),
-		log:      do.MustInvoke[zerolog.Logger](injector),
-	}, nil
 }
 
 type Resp[T any] struct {
